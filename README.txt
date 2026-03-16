@@ -1,0 +1,2 @@
+Data analysis scripts for the VIBMOT-Project.
+The VIBMOT-Project is a collaborative experimental study between the University of Milano-Bicocca, represented by Kevin Soter and Prof. Dr. Cristiano Alessandro and the Istituto Auxologico Italiano Milano represented by Dr. Stefano Scarano, Dr. Antonio Caronni, Ing. Viviana Rota, and Prof. Dr. Luigi Tesio.
