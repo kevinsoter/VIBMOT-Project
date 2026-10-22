@@ -47,8 +47,37 @@ def load_txt_file(file_path):
 def interpolate_linear(y, length_new_y):
     x = np.linspace(0, len(y)-1, len(y))
     new_x = np.linspace(0, len(y) - 1, length_new_y)
-    new_y = np.interp(new_x, x, y.squeeze())[np.newaxis].T
+    new_y = np.interp(new_x, x, y)
     return new_y
+
+def interpolate_angle_norm(pos, variable, angle_grid):
+    # Find all unique angle values
+    unique_angles = np.unique(pos)
+    
+    # For every unique angle, average all torque values observed there
+    mean_variable_per_angle = []
+    for angle in unique_angles:
+
+        mean_variable = np.mean(variable[pos == angle])
+        mean_variable_per_angle.append(mean_variable)
+
+    mean_variable_per_angle = np.array(mean_variable_per_angle)
+    
+    # Prepre output array filled with NaN
+    variable_interp = np.full(angle_grid.shape, np.nan, dtype=float)
+    
+    # Onl yinterpolate from min to max angles as present in trial
+    min_angle = unique_angles[0]
+    max_angle = unique_angles[-1]
+    valid_region = (angle_grid >= min_angle) & (angle_grid <= max_angle)
+
+    # Interpolate onto common angle grid
+    variable_interp[valid_region] = np.interp(
+        angle_grid[valid_region],
+        unique_angles,
+        mean_variable_per_angle)
+
+    return variable_interp
 
 def filt_bandpass(signal, fs, lowcut, highcut, order=4):
     nyquist = 0.5 * fs

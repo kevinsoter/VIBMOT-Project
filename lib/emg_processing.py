@@ -2,13 +2,16 @@
 """
 Created on Wed Feb  4 15:56:59 2026
 
+EMG is stored in Volt, thus something like 0.0002 V equal 200yV
+
 @author: Kevin
 """
 import numpy as np
 import scipy as sp
 import lib.utilities as u
 
-def compute_fft(signal, fs, f_min=60, f_max=95):
+def compute_fft(signal, fs, f_min=65, f_max=95):
+    # If checking greater ranges change to 30 - 200 (min-max)
 
     N = len(signal)
     fft_vals = np.fft.fft(signal)

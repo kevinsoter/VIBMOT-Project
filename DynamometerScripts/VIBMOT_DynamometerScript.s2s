@@ -1,0 +1,723 @@
+'--- FILL IN BY HAND    ---'
+
+'--- File Info ---'
+Var subj_no$ := "01";
+Var save_dir$ := "C:/Users/Administrator/Documents/Laboratorio/Documenti/Spike8/VIBMOT-Project/Subjects/Subj_25-MN_31072025";
+Var config_file$ := "C:/Users/Administrator/Documents/Laboratorio/Documenti/Spike8/VIBMOT-Project//VIBMOT_DynamometerConfiguration.s2cx";
+Var name$ := "test_";
+
+'--- Constant Variables ---'
+Var max_angle := 70;
+Var conv_torq := 0.01354;
+Var mvc_percent := 9;
+Var inertia := 4.8;
+
+'--- END ---'
+
+
+
+'Channels
+Var chanTorque% := 1;
+Var chanAngle% := 3;
+Var st_chan% := 4;
+Var vl_chan% := 5;
+Var bf_chan% := 6;
+Var gm_chan% := 7;
+Var chanArduino% := 8;
+Var frequency := 5000;
+
+'Var for idle
+Var check%;
+Var search% := 0;
+
+'Var for Normalize
+Var CursorHeight%;
+Var h1%;
+
+'Var for MVC
+Var mvc_value;
+var NameOfFile$;
+
+'Var for resting torque
+Var h2%;
+var val_zero := 0.00;
+var val_weight;
+var rest_value;
+var resttorq_name$ := "RestTorq_Subj.mat";
+
+'Var for AngleDisplay
+var XY2%;
+var TGet%;
+var TGet2%;
+
+'Var for AngleControlData
+Var Level;
+Var Scale;
+var dpvirt%;
+Var okay%;
+var eventMk%;
+Var vibrONAngle%;
+Var CurrentArduino;
+Var overshoot;
+
+'Var for TimeControlData
+var dpVirtTime%;
+var currentNum;
+var currentTim;
+var XY_time%;
+var TGet3%;
+var TGet4%;
+var okay_time%;
+Var okay1%;
+
+'Var for ForceControl
+var maxAngle := 1;
+Var Scale_force := 1/maxAngle;
+Var time := 1 / frequency;
+Var acc_start%;
+Var dpvirtTorq%;
+Var dpVirtForce%;
+Var test%;
+Var torq_val;
+Var previous_iso_acc;
+Var iso_angle;
+Var XY_force%;
+Var iso_acc;
+Var currentTime := 0.000;
+Var previousTime;
+Var interval;
+Var iso_vel;
+Var okay2%;
+Var vibrONForce%;
+var scaled_angle;
+var time_diff;
+var vCursor;
+var where;
+var overshoot_force;
+var force_angle;
+
+'Var for StartSampling
+Var Data%;
+var ready%;
+
+'Var for GetData
+var prePreviousVal;
+var previousVal;
+var currentVal;
+var filtVal;
+Var acc2vel;
+Var vel2dist;
+
+'Var Settings
+var type%;
+var track$[2];
+Track$[0]:="Gravity Resisted";
+Track$[1]:="Gravity Assisted"; 
+
+
+DoToolbar();
+Halt;
+
+
+Func DoToolbar() ' Bottons from top (left) to bottom (right)
+
+ToolbarClear();     'Remove any old buttons
+ToolbarSet(0, "", idle%);
+ToolbarSet(1, "&Quit|0x1b|Press Escape to quit the script", Quit%);    
+ToolbarSet(2, "Input", Settings%);
+ToolbarSet(3, "&Normalize", Normalize%);
+ToolbarSet(4, "MVC", mvc%);
+ToolbarSet(5, "RestTorq", restTorq%);
+ToolbarSet(6, "StartTime", StartTime%); ' starting timing countdown w/o arduino signal
+ToolbarSet(7, "StartVib", StartSearch%); ' Starting to search for arduino on signal
+ToolbarSet(8, "ForceControl", ForceStart%);
+ToolbarSet(9, "AngleControl", AngleControl%);
+ToolbarSet(10, "Sample Start", StartSampling%); 
+ToolbarEnable(1,1);
+ToolbarEnable(2,1);
+ToolbarEnable(3,0);
+ToolbarEnable(4,0);
+ToolbarEnable(5,0);
+ToolbarEnable(6,0);
+ToolbarEnable(7,0);
+ToolbarEnable(8,0);
+ToolbarEnable(9,0);
+ToolbarEnable(10,1);
+
+return Toolbar("Kevins Testing", 1023);
+end;
+
+Func idle%() 
+if SampleStatus() = 2 then ' 2 = sampling ON
+    ToolbarEnable(1,1);
+    ToolbarEnable(2,1);
+    ToolbarEnable(3,1);
+    ToolbarEnable(4,1);
+    ToolbarEnable(5,1);
+    ToolbarEnable(6,1);
+    ToolbarEnable(7,1);
+    ToolbarEnable(8,1);
+    ToolbarEnable(9,1);
+    ToolbarEnable(10,0);
+else
+    ToolbarEnable(1,1);
+    ToolbarEnable(2,1);
+    ToolbarEnable(3,0);
+    ToolbarEnable(4,0);
+    ToolbarEnable(5,0);
+    ToolbarEnable(6,0);
+    ToolbarEnable(7,0);
+    ToolbarEnable(8,0);
+    ToolbarEnable(9,0);
+    ToolbarEnable(10,1);
+endif
+
+if type% = 0 then
+   maxAngle := max_angle
+else
+    maxAngle := max_angle * -1
+endif
+
+
+if SampleStatus() = 2 then
+    if search% = 1 then
+        CurrentArduino := View(data%).ChanValue(chanArduino%, maxtime());
+        if CurrentArduino > 1.4 then
+            vibrONAngle% := 1;
+            search% := 0;
+        endif    
+    endif
+    if vibrONAngle% = 1 then
+        TimeControl%();
+        VibrONAngle% := 0;
+    endif
+endif
+
+if SampleStatus() = 2 then
+    if okay% = 1 then
+        GetData%();
+    endif
+    if okay1% = 1 then
+        GetDataTime%();
+    endif
+    if okay2% = 1 then
+        GetdataForce%();
+    endif
+endif
+
+if test% = 1 then
+    torq_val := View(data%).ChanValue(dpvirtTorq%, maxtime());
+    if type% = 0 then
+        if torq_val > 0 then
+            acc_start% := 1;
+        endif
+    else
+        if torq_val < 0 then
+            acc_start% := 1;
+        endif
+    endif
+endif
+
+if acc_start% = 1 then
+    ForceControl%();
+    test% := 0;
+    acc_start% := 0;
+endif
+
+if check% = 1 then
+    Yield(1);
+    SampleStop();    
+    View(Data%);
+    'overshoot := ChanMeasure(dpvirt%, 8, MaxTime()-7, MaxTime()) - 100; 
+    FilePathSet(save_dir$);
+    ExportChanList(0, MaxTime(), -1);
+    ExportRectFormat(5000, 0); '5000Hz for for all channels
+    FileSaveAs(NameOfFile$, 100); 'Save as .mat
+    FileSaveAs(NameOfFile$, 1); 'Save as .txt
+    FileSaveAs(NameOfFile$, 0); 'Save as Spike2 original file
+    if okay% = 1 then
+        message("%f", overshoot);
+    else
+        message("%f", overshoot_force);
+    endif
+    FileClose(Data%);
+    check% := 0;
+endif
+
+return 1;  'This leaves toolbar active
+end
+
+Func Getdata%();
+
+Var Yvalue[4];
+Var X[4];
+x[0]:=-0.5;
+x[1]:=-0.5;
+x[2]:=0.5;
+x[3]:=0.5;
+Yvalue[1]:=10;
+YValue[2]:=10;
+Yvalue[0]:=0;
+Yvalue[3]:=0;
+
+
+prePreviousVal := previousVal;
+previousVal := currentVal;
+currentVal := View(data%).ChanValue(dpVirt%, maxtime());
+filtVal := (previousVal + currentVal + prePreviousVal) / 3;
+
+ArrConst(Yvalue[1:2], filtVal);
+
+View(XY2%).XYAddData(1, x[], YValue[]);
+
+if filtVal > overshoot then
+    overshoot := filtVal;
+endif
+
+'YieldSystem(0.1);
+
+Return 1
+end
+
+Func GetdataTime%();
+
+Var Yvalue[4];
+Var X[4];
+x[0]:=-0.5;
+x[1]:=-0.5;
+x[2]:=0.5;
+x[3]:=0.5;
+Yvalue[1]:=10;
+YValue[2]:=10;
+Yvalue[0]:=0;
+Yvalue[3]:=0;
+
+    
+currentNum := View(data%).ChanValue(dpVirtTime%, maxtime());
+
+if currentNum > -1 then
+    currentTim := 6;
+endif
+if currentNum <= -1 and currentNum > -2 then
+    currentTim := 0
+endif
+if currentNum <= -2 and currentNum >= -2.2 then
+    currentTim := 3
+endif
+if currentNum <= -2.2 and currentNum > -3 then
+    currentTim := 0
+endif
+if currentNum <= -3 and currentNum >= -3.2 then
+    currentTim := 3
+endif
+if currentNum <= -3.2 and currentNum > -4 then
+    currentTim := 0
+endif
+if currentNum <= -4 and currentNum >= -4.2 then
+    currentTim := 3
+endif
+if currentNum <= -4.2 and currentNum > -5 then
+    currentTim := 0
+endif
+if currentNum <= -5 and currentNum >= -5.2 then
+    currentTim := 3
+endif
+if currentNum <= -5.2 and currentNum > -6 then
+    currentTim := 0
+endif
+if currentNum <= -6 then
+    currentTim := 6
+endif
+
+ArrConst(Yvalue[1:2], currentTim);
+
+View(XY_time%).XYAddData(1, x[], YValue[]);
+
+    if CurrentNum < -6 then
+        check% := 1;
+    endif
+
+'YieldSystem(0.1);
+
+Return 1
+end
+
+Func GetdataForce%();
+
+Var Yvalue[4];
+Var X[4];
+x[0]:=-0.5;
+x[1]:=-0.5;
+x[2]:=0.5;
+x[3]:=0.5;
+Yvalue[1]:=10;
+YValue[2]:=10;
+Yvalue[0]:=0;
+Yvalue[3]:=0;
+
+time_diff := seconds();
+
+previous_iso_acc := View(data%).ChanValue(dpVirtForce%, maxTime());
+iso_acc := previous_iso_acc;
+iso_vel += (iso_acc * time_diff);
+iso_angle += (iso_vel * time_diff);
+scaled_angle := iso_angle * Scale;
+force_angle := scaled_angle;
+
+if scaled_angle > overshoot_force then
+    overshoot_force := scaled_angle;
+endif
+
+'if force_angle < overshoot_force then
+ '   force_angle := overshoot_force;
+'endif
+ 
+ArrConst(Yvalue[1:2], force_angle);
+
+View(XY_force%).XYAddData(1, x[], YValue[]);
+
+
+Seconds(0);
+
+'YieldSystem(0.01);
+
+Return 1
+end
+
+Func StartSampling%()
+
+FileOpen(config_file$, 6);
+Seconds(1);
+overshoot := 0;
+okay%:= 0;
+okay1% := 0;
+okay2% := 0;
+acc_start% := 0;
+test% := 0;
+check% := 0;
+dpVirt% := 0;
+dpVirtTime% := 0;
+dpVirtForce% := 0;
+dpvirtTorq% := 0;
+previous_iso_acc := 0;
+iso_acc := 0;
+iso_vel := 0;
+iso_angle := 0;
+scaled_angle := 0;
+force_angle := 0;
+overshoot_force:= 0;
+overshoot := 0;
+FileNew(0, 2);
+YRange(gm_chan%, -0.001, 0.001);
+YRange(vl_chan%, -0.001, 0.001);
+YRange(bf_chan%, -0.001, 0.001);
+YRange(st_chan%, -0.001, 0.001);
+Data%:=SampleHandle(0);
+View(Data%);
+FrontView(Data%);
+
+if SampleStatus() > -1 then
+    SampleStart();
+    Seconds(0);
+endif
+
+return 1;  'This leaves toolbar active
+end;
+
+Func normalize%()
+
+View(data%);
+HCursorDelete(-1);
+CursorHeight% := ChanMeasure(chanAngle%, 2, MaxTime()-5, MaxTime());
+h1%:=HCursorNew(chanAngle%,0);
+HCursorActive(1, 3, MaxTime()-5, MaxTime());
+HCursorLabel(4, H1%, "%p | Position Zero");
+YRange(chanAngle%, CursorHeight% - 3, CursorHeight% +3);
+
+If HCursor(h1%) <> Level then
+    Level:=HCursor(h1%);
+    Scale:=100/maxAngle
+endif  
+
+return 1
+end
+
+Func mvc%()
+
+View(Data%);
+FrontView(Data%);
+SampleStop();
+CursorNew(0, 3); 
+mvc_value := ChanMeasure(chanTorque%, 10, Cursor(3), MaxTime()); 
+FilePathSet(save_dir$);
+ExportChanList(0, MaxTime(), -1);
+ExportRectFormat(5000, 0); '5000Hz for for all channels
+FileSaveAs(NameOfFile$, 1); 'Save as .txt
+FileSaveAs(NameOfFile$, 100); 'Save as .mat
+FileSaveAs(NameOfFile$, 0); 'Save as Spike2 original file
+message("%f", mvc_value);
+FileClose(Data%);
+
+return 1
+end
+
+Func restTorq%()
+
+View(Data%);
+FrontView(Data%);
+SampleStop();
+h2% := HCursorNew(chanTorque%, 1);
+HCursorActive(h2%, 1, maxtime());
+val_weight := Hcursor(h2%);
+rest_value := val_zero + val_weight;
+FilePathSet(save_dir$);
+ExportChanList(0, MaxTime(), -1);
+ExportRectFormat(5000, 0); '5000Hz for for all channels
+FileSaveAs(NameOfFile$, 100); 'Save as .mat
+FileSaveAs(NameOfFile$, 1); 'Save as .txt
+FileSaveAs(NameOfFile$, 0);
+message("%f", rest_value);
+FileClose(Data%);
+
+return 1
+end
+
+Func FileNew%();
+
+'force bar code
+'Currently in %; 100% means done
+XY2%:=FileNew(12,0);
+XYSize(1,-4);
+XYJoin(1,4);   'Set XY join mode
+XYColour(1,24,2);   'Set XY channel colour
+XYDrawMode(1,2,1);   'Point size
+XYDrawMode(1,5,0);
+
+TGet%:=XYSetChan(0, 2, 1, 1);
+TGet2%:=XYSetChan(0, 2, 1, 1);
+
+XYAddData(Tget%, -0.5, 0); 'Setting the start marker
+XYAddData(Tget%, 0.5, 0);
+XYAddData(TGet2%, -0.5, 100); 'Setting the goal marker
+XYAddData(TGet2%, 0.5, 100);
+   
+    
+XYDrawMode(2,4,4);   'Line width
+XYDrawMode(2,2,0);   'Point size
+XYColour(2,39);   'Set XY channel colour
+XYDrawMode(3,4,10);   'Line width
+XYDrawMode(3,2,0);   'Point size
+XYColour(3,16);   'Set XY channel colour
+YRange(1, 0, 110);
+XRange(-0.5, 0.5);
+XAxis(0);
+
+Window(5,0,100,100);
+WindowTitle$("AngleControl"); 
+WindowVisible(1);
+
+okay%:= 1;
+
+return 1
+end;
+
+Func TimeNew%();
+
+'Timebar; from top to bottom
+XY_time%:=FileNew(12,0);
+XYSize(1,-4);
+XYJoin(1,4);   'Set XY join mode
+XYColour(1,16,2);   'Set XY channel colour
+XYDrawMode(1,2,1);   'Point size
+XYDrawMode(1,5,0);
+
+TGet3%:=XYSetChan(0, 2, 1, 1);
+TGet4%:=XYSetChan(0, 2, 1, 1);
+
+XYAddData(Tget3%, -0.5, -1); 'Setting the start marker
+XYAddData(Tget3%, 0.5, -1);
+
+XYDrawMode(2,4,4);   'Line width
+XYDrawMode(2,2,0);   'Point size
+XYColour(2,39);   'Set XY channel colour
+XYDrawMode(3,4,10);   'Line width
+XYDrawMode(3,2,0);   'Point size
+XYColour(3,16);   'Set XY channel colour
+YRange(-1, 0, 6);
+XRange(-0.5, 0.5);
+XAxis(0);
+YAxis(0);
+
+Window(0,0,5,100);
+WindowTitle$("Time"); 
+WindowVisible(1);
+
+okay1%:= 1;
+
+return 1
+end;
+
+Func ForceNew%();
+
+'force bar code
+'Currently in %; 100% means done
+XY_force%:=FileNew(12,0);
+XYSize(1,-4);
+XYJoin(1,4);   'Set XY join mode
+XYColour(1,24,2);   'Set XY channel colour
+XYDrawMode(1,2,1);   'Point size
+XYDrawMode(1,5,0);
+
+TGet%:=XYSetChan(0, 2, 1, 1);
+TGet2%:=XYSetChan(0, 2, 1, 1);
+
+XYAddData(Tget%, -0.5, 0); 'Setting the start marker
+XYAddData(Tget%, 0.5, 0);
+XYAddData(TGet2%, -0.5, 100); 'Setting the goal marker
+XYAddData(TGet2%, 0.5, 100);
+   
+    
+XYDrawMode(2,4,4);   'Line width
+XYDrawMode(2,2,0);   'Point size
+XYColour(2,39);   'Set XY channel colour
+XYDrawMode(3,4,10);   'Line width
+XYDrawMode(3,2,0);   'Point size
+XYColour(3,16);   'Set XY channel colour
+YRange(1, -10, 110);
+XRange(-0.5, 0.5);
+XAxis(0);
+
+Window(5,0,100,100);
+WindowTitle$("AngleControl"); 
+WindowVisible(1);
+
+seconds(0);
+okay2%:= 1;
+
+return 1
+end;
+
+Func AngleControl%();
+
+view(data%);
+
+dpVirt%:=VirtualChan(dpVirt%, Print$("(Ch(%d) - %f) * %f * %f", ChanAngle%, Level, Scale, -1), chanAngle%);
+ChanTitle$(dpVirt%, "PosCorrected");
+ChanShow(dpVirt%);
+YRange(dpvirt%, -10, 110);
+
+if okay% = 0 then
+    Filenew%();
+endif
+
+return 1
+end
+
+
+Func ForceStart%();
+
+view(data%);
+
+if type% = 0 then
+    dpvirtTorq%:=VirtualChan(dpvirtTorq%, Print$("((((Ch(%d)) / %f) - %f))", ChanTorque%, conv_torq, mvc_percent), chanTorque%);
+else
+    dpvirtTorq%:=VirtualChan(dpvirtTorq%, Print$("((((Ch(%d)) / %f) + %f))", ChanTorque%, conv_torq, mvc_percent), chanTorque%);
+endif
+
+ChanTitle$(dpvirtTorq%, "TorqCorrected");
+ChanShow(dpvirtTorq%);
+YRange(dpvirtTorq%, 10, -100);
+
+
+dpVirtForce%:=VirtualChan(dpVirtForce%, Print$(" (Ch(%d) - Ch(%d))", ChanTorque%, chanTorque%), chanTorque%);
+ChanTitle$(dpVirtForce%, "ArtificialAcc");
+ChanShow(dpVirtForce%);
+YRange(dpvirtForce%, -250, 250);
+
+test% := 1;
+
+if okay% = 0 then
+    ForceNew%(); 
+endif
+
+return 1
+end
+
+Func ForceControl%();
+
+view(data%);
+
+if type% = 0 then
+    VirtualChan(dpVirtForce%, Print$(" ((((Ch(%d)) / %f) - %f) / %f) * (%f / %f)", ChanTorque%, conv_torq, mvc_percent, inertia, 180.0, _pi), chanTorque%);
+else
+    VirtualChan(dpVirtForce%, Print$(" ((((Ch(%d)) / %f) + %f) / %f) * (%f / %f)", ChanTorque%, conv_torq, mvc_percent, inertia, 180.0, _pi), chanTorque%);
+endif
+    
+'ChanTitle$(dpVirtForce%, "ArtificialAcc");
+'ChanShow(dpVirtForce%);
+'YRange(dpvirtForce%, -250, 250);
+
+'if okay% = 0 then
+ '   ForceNew%(); 
+'endif
+
+return 1
+end
+
+Func TimeControl%();
+
+view(data%);
+
+dpVirtTime%:=VirtualChan(dpVirtTime%, Print$("(Ch(%d) - Ch(%d)) + (WT(%f, %f)) * (%f)", ChanAngle%, ChanAngle%, maxtime(), maxtime()+7, -1), chanAngle%);
+ChanTitle$(dpVirtTime%, "Timer");
+ChanShow(dpVirtTime%);
+YRange(dpvirtTime%, -5, 0);
+
+if vibrONAngle% = 1 then
+    TimeNew%();
+endif
+
+return 1
+end
+
+Func Settings%()
+
+var ok%;
+DlgCreate ("Title for the dialog");        'start new dialog
+DlgGroup("General Settings",1,1,45,3);
+DlgList   (1,"Gravity",track$[], 2, 22, 2);
+DlgReal   (2, "Max Angle", -100.0, 100.0, 22, 3); 'real, range 1.0-5.0
+
+DlgGroup("Force Settings",1,4,45,4);
+DlgReal   (3, "Torq Conversion", 0.0, 100.0, 22, 5); 'real, range 1.0-5.0
+DlgReal   (4, "Inertia", 0.0, 100.0, 22, 6); 'real, range 1.0-5.0
+DlgReal   (5, "Resisting Torque", -200.0, 200.0, 22, 7); 'real, range 1.0-5.0 
+'DlgReal   (6, "Time Diff", -2000.0, 2000.0, 22, 8); 'real, range 1.0-5.0 
+'DlgReal   (7, "Current Time", -2000.0, 2000.0, 22, 9); 'real, range 1.0-5.0 
+'DlgReal   (8, "Iso Acc", -2000.0, 2000.0, 22, 10); 'real, range 1.0-5.0 
+'DlgReal   (9, "Scaled Angle", -2000.0, 2000.0, 22, 11); 'real, range 1.0-5.0 
+
+
+DlgButton(0,"Close");
+DlgButton(1,"Apply");
+
+ok% := DlgShow(type%, max_angle, conv_torq, inertia, mvc_percent); 'show dialog
+
+return 1
+end
+
+Func StartSearch%(); 'Function to start the search for the SenS-Device Signal
+search% := 1;
+return 1
+end
+
+Func StartTime%();
+vibrONAngle% := 1;
+return 1
+end
+
+Func quit%()
+SampleStop();
+FileClose(data%);
+return 0
+end

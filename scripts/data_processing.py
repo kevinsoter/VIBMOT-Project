@@ -17,22 +17,35 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 
 
-def rest_processing(rest_path):
+
+def rest_processing(rest_path, dominance):
     # Calculating resting lever-arm position and torq for gravity correction
     # Based on last measurement point (same as in spike2 script)
     rest_values = pd.DataFrame()
     
     trial = u.load_txt_file(rest_path[0])
-    pos = trial["Posizion"]
-    torq = trial["Coppia"]
+    if "R" in str(dominance): # flipping torque as isokinet was turned around for L
+        torq = trial["Coppia"]
+        vel = trial["Velocita"]
+        pos = trial["Posizion"]
+    elif "L" in str(dominance):
+        torq = trial["Coppia"] * -1
+        vel = trial["Velocita"] * -1
+        pos = trial["Posizion"] * -1
     
     rest_pos = pos.iloc[-1] # shank angle relative to vertical
     rest_torq = (torq.iloc[-1] / c.convFact) * -1 # MaxGET (according to HUMAC manual)
     # -1 as extension is negative and rest position will always be measured as extension
+    torq_SD = np.std((torq/c.convFact) * -1)
+    rest_vel = np.mean(vel)
+    vel_SD = np.std(vel)
 
     rest_values = {
         "pos": rest_pos,
-        "torq": rest_torq
+        "torq": rest_torq,
+        "torq_SD": torq_SD,
+        "vel": rest_vel,
+        "vel_SD": vel_SD
         }
 
     return rest_values
@@ -45,15 +58,17 @@ def gravity_corr(raw_torq, raw_pos, rest_pos, rest_torq, task):
     
     if "flex" in str(task):
         # Resisted = M_measured/conversion_factor + (MaxGET * cos(shank angle))
+        # Raw flexion torque is positive; (+) thus increases this
         torq_exert = torq_conv + (rest_torq * np.cos(np.deg2rad(pos_shank)))
     elif "ext" in str(task):
         # Assissted = M_measured/conversion_factor - (MaxGET * cos(ahank angle))
+        # Raw extension torque is negative; (+) thus decreases this
         torq_exert = torq_conv + (rest_torq * np.cos(np.deg2rad(pos_shank)))
         
     return torq_exert
 
 
-def mvc_processing(save_folder, subjTrials, rest_values, notch):
+def mvc_processing(save_folder, subjTrials, rest_values, dominance, notch):
 
     ### File creation ###
     save_file = os.path.join(save_folder, "mvc_data.pkl")
@@ -82,10 +97,14 @@ def mvc_processing(save_folder, subjTrials, rest_values, notch):
             flex_torq_all.append(torq_filt)
         elif "ext" in str(path):
             ext_torq_all.append(torq_filt)
-        
-    flex_torq_all   = np.concatenate(flex_torq_all)
-    ext_torq_all    = np.concatenate(ext_torq_all)
     
+    if "R" in str(dominance):
+        flex_torq_all   = np.concatenate(flex_torq_all)
+        ext_torq_all    = np.concatenate(ext_torq_all)
+    elif "L" in str(dominance):
+        flex_torq_all   = np.concatenate(flex_torq_all) * -1
+        ext_torq_all    = np.concatenate(ext_torq_all) * -1
+        
     
     # Pre-allocate baseline values
     baselines = {"flex": None, "ext": None}
@@ -277,17 +296,44 @@ def mvc_processing(save_folder, subjTrials, rest_values, notch):
     return mvc_data["mvc"]
 
 
-def data_processing(path_list, condition, mvc, rest_values, target_length=25000):
+def data_processing(path_list, condition, mvc, rest_values, dominance, angle_grid, target_length=5001):
     # Path list of one specific condition
     # Condition either "vib" or "non"
-    # Target length is 6s times 5000 Hz
+    # Original sample fs is 5000 Hz, target length is 1000 values per s
     
-    variables = ["BF", "ST", "VL", "GM", "Pos", "Vel", "Torq", "Arduino"]
-    data = {var: pd.DataFrame() for var in variables}
-    test = {var: pd.DataFrame() for var in variables} # can be deleted after testing done
+    variables       = ["BF", "ST", "VL", "GM", "Pos", "Vel", "Acc", "Torq", "Arduino"]
+    data            = {var: pd.DataFrame() for var in variables}
+    data_angle      = {var: pd.DataFrame() for var in variables}
+    test            = {var: pd.DataFrame() for var in variables} # can be deleted after testing done
+    
+    discrete_vars = [
+        "AngleEnd",
+        "TimePosStart",
+        "TorqPeak",
+        "TimeTorqPeak",
+        "RFD_Peak",
+        "TimeRFD_Peak",
+        "VelPeak",
+        "TimeVelPeak",
+        "AccPeak",
+        "TimeAccPeak",
+        "TorqStart",
+        "RFD_avg",
+        "BF_iEMG",
+        "ST_iEMG",
+        "VL_iEMG",
+        "GM_iEMG",
+        "Pos_Area_Total",
+        "Torq_Area_Total",
+        "Torq_Area_Start",
+        "Torq_Area_End",
+        "Ham_Corr",
+        "Quad-Ham_Corr"
+    ]
+    data_discrete = {var: pd.DataFrame() for var in discrete_vars}
     
     for num, path in enumerate(path_list):
-        
+                
         filename = os.path.basename(str(path)) 
         trial_name = os.path.splitext(filename)[0]        
         
@@ -295,26 +341,37 @@ def data_processing(path_list, condition, mvc, rest_values, target_length=25000)
         
         trial = u.load_txt_file(path)
         
+        #print(f"Working on {col_name}")
+        
         # Define variables
         bf = trial["Bic_Fem"]
         st = trial["Sem_Tend"]
         vl = trial["Vast_Lat"]
         gm = trial["Gast_Med"]
-        pos = trial["Posizion"]
-        vel = trial["Velocita"]
-        torq = trial["Coppia"]
         arduino = trial["Arduino"]
+        
+        
+        if "R" in str(dominance):
+            pos = trial["Posizion"]
+            vel = trial["Velocita"]
+            torq = trial["Coppia"]
+        elif "L" in str(dominance):
+            pos = trial["Posizion"] * -1
+            vel = trial["Velocita"] * -1
+            torq = trial["Coppia"] * -1
         
         if condition == "non":
             vib_fs = None
         else:
             ### Compute notch filter fs ###
             f_vib, fft_vib, vib_fs = emg.compute_fft(st, c.fs)
-            if vib_fs < 65 or vib_fs > 95:
+            if vib_fs < 75 or vib_fs > 90:
                 print(f"Vib fs {vib_fs} Hz in {trial_name}")
             else:
                 pass
-            
+        # If testing for vib frequency uncomment below
+        # plt.figure(); plt.plot(f_vib, fft_vib)
+                
         ### Filter EMG ###
         bf_bp, bf_env = emg.preprocess(bf, c.fs, c.bp_low, c.bp_high, c.lpCutoff, vib_fs)
         st_bp, st_env = emg.preprocess(st, c.fs, c.bp_low, c.bp_high, c.lpCutoff, vib_fs)
@@ -322,62 +379,273 @@ def data_processing(path_list, condition, mvc, rest_values, target_length=25000)
         gm_bp, gm_env = emg.preprocess(gm, c.fs, c.bp_low, c.bp_high, c.lpCutoff, vib_fs)
 
         ### Normalize EMG ###
+        bf_bp_norm = bf_bp / mvc["BF"]
+        st_bp_norm = st_bp / mvc["ST"]
+        vl_bp_norm = vl_bp / mvc["VL"]
+        gm_bp_norm = gm_bp / mvc["GM"]
+        
         bf_norm = bf_env / mvc["BF"]
         st_norm = st_env / mvc["ST"]
         vl_norm = vl_env / mvc["VL"]
         gm_norm = gm_env / mvc["GM"]
         
-        ### Gravity correct and normalize torque to MVC ###
-        torq_corr = gravity_corr(torq, pos, rest_values["pos"], rest_values["torq"], path)
-        if "flex" in str(path):
-            torq_norm = torq_corr / mvc["Flex"]
-        elif "ext" in str(path):
-            torq_norm = torq_corr / mvc["Ext"]
+        ### Offset correct position and velocity data (250 ms = 1000 samples)
+        pos_offs = pos - np.mean(pos[500:1500])
+        vel_offs = vel - np.mean(vel[500:1500])
               
         ### Filter dynamometer data ###
-        pos_corr = pos - np.mean(pos[1000:3500])
-        pos_filt = u.filt_lowpass(pos_corr, c.lpCutoff, c.fs)
-        vel_filt = u.filt_lowpass(vel, c.lpCutoff, c.fs)
-        torq_filt  = u.filt_lowpass(torq_norm, c.lpCutoff, c.fs)
+        pos_filt = u.filt_lowpass(pos_offs, c.lpCutoff, c.fs)
+        vel_filt = u.filt_lowpass(vel_offs, c.lpCutoff, c.fs) 
+        
+        ### Add angular acceleration data
+        acc = np.gradient(vel_filt, 1/c.fs)
+        
+        idx = np.where(abs(pos_filt) >= 5.0)[0] # (4° of RoM movement just to clearly be above 0°; to search backwards from)
+        idx_bSearch = idx[0]
+        
+        ### Gravity correct and normalize torque to MVC ###
+        torq_corr = gravity_corr(torq, pos, rest_values["pos"], rest_values["torq"], path) 
+        
+        # Everything needed to offset correct torque based on 1250 ms of stable baseline
+        torq_preFilt = u.filt_lowpass(torq_corr, c.lpCutoff, c.fs)
+        rfd_pre = np.gradient(torq_preFilt, 1/c.fs) 
+        
+        window = int(0.25 * c.fs)   # 250 ms = 1250 samples      
+        rfd_thresh = 0.7      # xMVC/s
+        torq_sd_thresh = 0.18   # 3x average torq_filt SD in rest
+        
+        for i in range(idx_bSearch - window, window, -1):
+        
+            torq_window = torq_preFilt[i-window:i]
+            rfd_window = rfd_pre[i-window:i]
+        
+            if (np.std(torq_window) < torq_sd_thresh and
+                np.mean(np.abs(rfd_window)) < rfd_thresh):
+        
+                idx_onset = i
+                break
+            
+        if idx_onset is None:
+            ValueError(f"No stable baseline found for trial {trial_name}")
+            
+        torq_offset = np.mean(torq_preFilt[idx_onset-window:idx_onset])
+        
+        if "flex" in str(path):
+            torq_norm = (torq_corr - torq_offset) / mvc["Flex"] # normalize to flex MVC
+            torq_offs = torq_corr - torq_offset # only offset corrected but not normalized
+        elif "ext" in str(path):
+            torq_norm = (torq_corr - torq_offset) / mvc["Ext"] # normalize to ext MVC   
+            torq_offs = (torq_corr - torq_offset) * -1 # flipping because normalization with negative extension MVC also flips; only offset corrected but not normalized
+   
+        torq_filt  = u.filt_lowpass(torq_norm, c.lpCutoff, c.fs) #' !!! NEEDS TO BE TORQ_NORM !!!'
+        torq_offs_filt  = u.filt_lowpass(torq_offs, c.lpCutoff, c.fs)
         
         ### Start & finish times ###
-        on_off = np.where(arduino >= 2.1)[0] # 1.2V for first waiting second before start
-        start = on_off[0]
-        finish = on_off[-1]
-        arduino_length = (finish - start) / c.fs
+        on_off_early = np.where(arduino >= 1.2)[0] # 1.2V for first waiting second before start; 2.1 for second
+        on_off_late = np.where(arduino  >= 2.1)[0]
+        start_6s = on_off_early[0] - (2 * c.fs)
+        start_5s = on_off_late[0]
+        finish = on_off_late[-1]
+        arduino_length_5s = (finish - start_5s) / c.fs
         
-        if arduino_length < 5.0 :
-            print(f"{trial_name} is {arduino_length}s of 5s")
+        if arduino_length_5s < 5.0 :
+            print(f"{trial_name} is {arduino_length_5s}s of 5s")
         else:
             pass
         
-        ### Resample data to start 1s before start signal and end immediately after
-        pos_cut = sp.signal.resample(pos_filt[start : finish], target_length)
-        vel_cut = sp.signal.resample(vel_filt[start : finish], target_length)
-        torq_cut = sp.signal.resample(torq_filt[start : finish], target_length)
-
-        bf_cut = sp.signal.resample(bf_norm[start : finish], target_length)
-        st_cut = sp.signal.resample(st_norm[start : finish], target_length)
-        vl_cut = sp.signal.resample(vl_norm[start : finish], target_length)
-        gm_cut = sp.signal.resample(gm_norm[start : finish], target_length)
+        ### Flip all Extension curves to positive and all Flexion curves to negative 
+        # (Pos already with correct sign; Torq only correctin Extension direction)
+        # 5s used for time normalized continuous curves and SPM
+        pos_cut     = pos_filt[start_5s : finish]
+        if "flex" in str(path):
+            vel_cut     = vel_filt[start_5s : finish] * -1
+            acc_cut     = acc[start_5s : finish] * -1
+            torq_cut    = torq_filt[start_5s : finish] * -1
+        elif "ext" in str(path):
+            vel_cut     = vel_filt[start_5s : finish] * -1
+            acc_cut     = acc[start_5s : finish] * -1
+            torq_cut    = torq_filt[start_5s : finish]
+        # EMGs always positive
+        bf_cut      = bf_norm[start_5s : finish]
+        st_cut      = st_norm[start_5s : finish]
+        vl_cut      = vl_norm[start_5s : finish]
+        gm_cut      = gm_norm[start_5s : finish]
+        arduino_cut = arduino[start_5s : finish]
         
-        arduino_cut = sp.signal.resample(arduino[start : finish], target_length)
+        # 6s used for discrete measures
+        pos_6s     = pos_filt[start_6s : finish]
+        if "flex" in str(path):
+            vel_6s     = vel_filt[start_6s : finish] * -1
+            acc_6s     = acc[start_6s : finish] * -1
+            torq_6s    = torq_filt[start_6s : finish] * -1
+            torq_offs_6s = torq_offs_filt[start_6s : finish] * -1
+        elif "ext" in str(path):
+            vel_6s     = vel_filt[start_6s : finish] * -1
+            acc_6s     = acc[start_6s : finish] * -1
+            torq_6s    = torq_filt[start_6s : finish]
+            torq_offs_6s = torq_offs_filt[start_6s : finish]
+        bf_6s      = bf_bp_norm[start_6s : finish]
+        st_6s      = st_bp_norm[start_6s : finish]
+        vl_6s      = vl_bp_norm[start_6s : finish]
+        gm_6s      = gm_bp_norm[start_6s : finish]
+
+        ### Dicrete Measures (taken from 6s, so 1s baseline + 5s movement)
+        if "flex" in str(path):
+            posEnd = pos_6s[-1] # end position in degrees to compare between conditions
+            
+            idx = np.where(vel_6s <= -1.0)[0] # (vel_filt above 1.0°/s because baseline around 0.2 in trials and SD 0.2 in rest)
+            idx_posStart = idx[0]
+            t_posStart = idx_posStart / c.fs * 1000 # in ms
+            
+            idx_velPeak = np.argmin(vel_6s[0:25000])
+            t_velPeak = idx_velPeak / c.fs * 1000 # in ms
+            velPeak = vel_6s[idx_velPeak]
+            
+            idx_accPeak = np.argmin(acc_6s[0:idx_velPeak])
+            t_accPeak = idx_accPeak / c.fs * 1000 # in ms
+            accPeak = acc_6s[idx_accPeak]
+            
+            idx_torqPeak = np.argmin(torq_6s[0:idx_velPeak])
+            t_torqPeak = idx_torqPeak / c.fs * 1000 # in ms
+            torqPeak = torq_6s[idx_torqPeak]
+            
+            rfd = np.diff(torq_6s[0:idx_torqPeak] * c.fs)
+            idx_peakRFD = np.argmin(rfd)
+            peak_rfd = rfd[idx_peakRFD]
+            t_peakRFD = idx_peakRFD / c.fs * 1000  # in ms
+            
+            rfd = np.diff(torq_offs_6s) * c.fs
+            idx = np.where(rfd[:idx_peakRFD] > -15.0)[0]
+            idx_2 = np.where(torq_offs_6s[idx] > -15.0)[0]
+            if idx_2.size == 0:
+                idx_torqStart = 0
+            else:
+                idx_torqStart = idx_2[-1] + 1
+            t_torqStart = idx_torqStart / c.fs * 1000 # in ms
+            rfd_avg = (torqPeak - torq_6s[idx_torqStart]) / ((idx_torqPeak - idx_torqStart) / c.fs)
+                                    
+        elif "ext" in str(path):
+            posEnd = pos_6s[-1] # end position in degrees to compare between conditions
+            
+            idx = np.where(vel_6s >= 1.0)[0] # (vel_filt above 1.0°/s because baseline around 0.2 in trials and SD 0.2 in rest)
+            idx_posStart = idx[0]
+            t_posStart = idx_posStart / c.fs * 1000 # in ms
+            
+            idx_velPeak = np.argmax(vel_6s[0:25000])
+            t_velPeak = idx_velPeak / c.fs * 1000 # in ms
+            velPeak = vel_6s[idx_velPeak]
+            
+            idx_accPeak = np.argmax(acc_6s[0:idx_velPeak])
+            t_accPeak = idx_accPeak / c.fs * 1000 # in ms
+            accPeak = acc_6s[idx_accPeak]
+            
+            idx_torqPeak = np.argmax(torq_6s[0:idx_velPeak])
+            t_torqPeak = idx_torqPeak / c.fs * 1000 # in ms
+            torqPeak = torq_6s[idx_torqPeak]
+            
+            rfd = np.diff(torq_6s[0:idx_torqPeak] * c.fs)
+            idx_peakRFD = np.argmax(rfd)
+            peak_rfd = rfd[idx_peakRFD]
+            t_peakRFD = idx_peakRFD / c.fs * 1000  # in ms
+            
+            rfd = np.diff(torq_offs_6s) * c.fs
+            idx = np.where(rfd[:idx_peakRFD] < 15.0)[0]
+            idx_2 = np.where(torq_offs_6s[idx] < 15.0)[0]
+            if idx_2.size == 0:
+                idx_torqStart = 0
+            else:
+                idx_torqStart = idx_2[-1] + 1
+            t_torqStart = idx_torqStart / c.fs * 1000 # in ms
+            rfd_avg = (torqPeak - torq_6s[idx_torqStart]) / ((idx_torqPeak - idx_torqStart) / c.fs)
+                        
+            
+        bf_rise = np.trapezoid(np.abs(bf_6s[idx_torqStart:idx_torqPeak]), dx=1/c.fs)
+        st_rise = np.trapezoid(np.abs(st_6s[idx_torqStart:idx_torqPeak]), dx=1/c.fs)
+        vl_rise = np.trapezoid(np.abs(vl_6s[idx_torqStart:idx_torqPeak]), dx=1/c.fs)
+        gm_rise = np.trapezoid(np.abs(gm_6s[idx_torqStart:idx_torqPeak]), dx=1/c.fs)
+
+        pos_area_total = np.trapezoid(pos_6s[-1 - (5 * c.fs) : -1], dx=1/c.fs)
+        torq_area_total = np.trapezoid(torq_6s[-1 - (5 * c.fs) : -1], dx=1/c.fs)
+        torq_area_start = np.trapezoid(torq_6s[-1 - (5 * c.fs) : idx_velPeak], dx=1/c.fs)
+        torq_area_end = np.trapezoid(torq_6s[idx_velPeak : -1], dx=1/c.fs)
+        
+        hamstring_corr, p = sp.stats.pearsonr(bf_cut, st_cut)
+        ham_corr_z = np.arctanh(hamstring_corr)
+        
+        hamstring_cut = (bf_cut + st_cut) / 2
+        quad_hams_corr, p = sp.stats.pearsonr(vl_cut, hamstring_cut)
+        quad_ham_corr_z = np.arctanh(quad_hams_corr)
+
+
+        ### Angle normalization from 0 to 72.5 degrees (70 degrees as goal with 5% margin of error) 
+        pos_angle    = u.interpolate_angle_norm(pos_cut, pos_cut, angle_grid)    
+        vel_angle   = u.interpolate_angle_norm(pos_cut, vel_cut, angle_grid)
+        acc_angle   = u.interpolate_angle_norm(pos_cut, acc_cut, angle_grid)
+        torq_angle  = u.interpolate_angle_norm(pos_cut, torq_cut, angle_grid)
+        bf_angle    = u.interpolate_angle_norm(pos_cut, bf_cut, angle_grid)
+        st_angle    = u.interpolate_angle_norm(pos_cut, st_cut, angle_grid)
+        vl_angle    = u.interpolate_angle_norm(pos_cut, vl_cut, angle_grid)
+        gm_angle    = u.interpolate_angle_norm(pos_cut, gm_cut, angle_grid)
+        
+        ### Time normalize data with resampling to start at start signal and end immediately after
+        pos_resamp = u.interpolate_linear(pos_cut, target_length)
+        vel_resamp = u.interpolate_linear(vel_cut, target_length)
+        acc_resamp = u.interpolate_linear(acc_cut, target_length)
+        torq_resamp = u.interpolate_linear(torq_cut, target_length)
+        bf_resamp = u.interpolate_linear(bf_cut, target_length)
+        st_resamp = u.interpolate_linear(st_cut, target_length)
+        vl_resamp = u.interpolate_linear(vl_cut, target_length)
+        gm_resamp = u.interpolate_linear(gm_cut, target_length)
+        
+        arduino_resamp = u.interpolate_linear(arduino_cut, target_length)
         
         ### Allocate to dict
-        data["BF"][col_name] = bf_cut
-        data["ST"][col_name] = st_cut
-        data["VL"][col_name] = vl_cut
-        data["GM"][col_name] = gm_cut
-        data["Pos"][col_name] = pos_cut
-        data["Vel"][col_name] = vel_cut
-        data["Torq"][col_name] = torq_cut
-        data["Arduino"][col_name] = arduino_cut
+        data["BF"][col_name]        = bf_resamp
+        data["ST"][col_name]        = st_resamp
+        data["VL"][col_name]        = vl_resamp
+        data["GM"][col_name]        = gm_resamp
+        data["Pos"][col_name]       = pos_resamp
+        data["Vel"][col_name]       = vel_resamp
+        data["Acc"][col_name]       = acc_resamp
+        data["Torq"][col_name]      = torq_resamp
+        data["Arduino"][col_name]   = arduino_resamp
         
-        
+        data_angle["BF"][col_name]        = bf_angle
+        data_angle["ST"][col_name]        = st_angle
+        data_angle["VL"][col_name]        = vl_angle
+        data_angle["GM"][col_name]        = gm_angle
+        data_angle["Pos"][col_name]       = pos_angle
+        data_angle["Vel"][col_name]       = vel_angle
+        data_angle["Acc"][col_name]       = acc_angle
+        data_angle["Torq"][col_name]      = torq_angle
+    
+        data_discrete["AngleEnd"][col_name]     = pd.DataFrame({'posEnd': [posEnd]})
+        data_discrete["TimePosStart"][col_name] = pd.DataFrame({'t_PosStart': [t_posStart]})
+        data_discrete["TorqPeak"][col_name]     = pd.DataFrame({'torqPeak': [torqPeak]})
+        data_discrete["TimeTorqPeak"][col_name] = pd.DataFrame({'t_torqPeak':[t_torqPeak]})
+        data_discrete["RFD_Peak"][col_name]     = pd.DataFrame({'peak_rfd': [peak_rfd]})
+        data_discrete["TimeRFD_Peak"][col_name] = pd.DataFrame({'t_peakRFD': [t_peakRFD]})
+        data_discrete["VelPeak"][col_name]      = pd.DataFrame({'velPeak': [velPeak]})
+        data_discrete["TimeVelPeak"][col_name]  = pd.DataFrame({'t_velPeak': [t_velPeak]})
+        data_discrete["AccPeak"][col_name]      = pd.DataFrame({'accPeak': [accPeak]})
+        data_discrete["TimeAccPeak"][col_name]  = pd.DataFrame({'t_accPeak': [t_accPeak]})
+        data_discrete["TorqStart"][col_name]    = pd.DataFrame({'t_torqStart': [t_torqStart]})
+        data_discrete["RFD_avg"][col_name]      = pd.DataFrame({'rfd_avg': [rfd_avg]})
+        data_discrete["BF_iEMG"][col_name]      = pd.DataFrame({'bf_rise': [bf_rise]})
+        data_discrete["ST_iEMG"][col_name]      = pd.DataFrame({'st_rise': [st_rise]})
+        data_discrete["VL_iEMG"][col_name]      = pd.DataFrame({'vl_rise': [vl_rise]})
+        data_discrete["GM_iEMG"][col_name]      = pd.DataFrame({'gm_rise': [gm_rise]})
+        data_discrete["Pos_Area_Total"][col_name]   = pd.DataFrame({'pos_area_total': [pos_area_total]})
+        data_discrete["Torq_Area_Total"][col_name]  = pd.DataFrame({'torq_area_total': [torq_area_total]})
+        data_discrete["Torq_Area_Start"][col_name]  = pd.DataFrame({'torq_area_start': [torq_area_start]})
+        data_discrete["Torq_Area_End"][col_name]    = pd.DataFrame({'torq_area_end': [torq_area_end]})
+        data_discrete["Ham_Corr"][col_name]         = pd.DataFrame({'ham_corr': [ham_corr_z]})
+        data_discrete["Quad-Ham_Corr"][col_name]    = pd.DataFrame({'quad-ham_corr': [quad_ham_corr_z]})
+
         ### TEST DATA TO CHECK EVERYTHING ###
         pos_test = sp.signal.resample(pos[0 : -1], target_length)
         vel_test = sp.signal.resample(vel_filt[0 : -1], target_length)
-        torq_test = sp.signal.resample(torq[0 : -1], target_length)
+        torq_test = sp.signal.resample(torq_offs_filt[0 : -1], target_length)
 
         bf_test = sp.signal.resample(bf_bp[0 : -1], target_length)
         st_test = sp.signal.resample(st_bp[0 : -1], target_length)
@@ -395,4 +663,4 @@ def data_processing(path_list, condition, mvc, rest_values, target_length=25000)
         test["Torq"][col_name] = torq_test
         test["Arduino"][col_name] = arduino_test
         
-    return data, test, bf_bp
+    return data, data_angle, data_discrete, test, bf_bp
